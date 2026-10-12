@@ -44,11 +44,16 @@ type Board struct {
 	pieces [size][size]byte
 	status *widgets.Label
 
+	turn Side
+
 	// holding is zero when nothing is picked up.
 	holding          byte
 	fromRow, fromCol int
 
 	curRow, curCol int
+
+	// onMove runs after a completed move, so the game can let an engine answer.
+	onMove func()
 }
 
 func NewBoard(startingPos [size]string) *Board {
@@ -60,7 +65,8 @@ func NewBoard(startingPos [size]string) *Board {
 
 	b := &Board{
 		grid:   stgui.NewEmptyGrid(size, size, style),
-		status: widgets.NewLabel("enter: pick up   q: quit"),
+		status: widgets.NewLabel(""),
+		turn:   White,
 		curRow: startRow,
 		curCol: startCol,
 	}
@@ -73,6 +79,7 @@ func NewBoard(startingPos [size]string) *Board {
 		}
 	}
 
+	b.setStatus("enter: pick up   q: quit")
 	b.draw()
 
 	return b
@@ -121,34 +128,75 @@ func (b *Board) onKey(cursor *stgui.Cursor, input stgui.Input) stgui.Action {
 
 	switch {
 	case b.holding == 0:
-		if b.pieces[row][col] == 0 {
-			b.status.Text = fmt.Sprintf("%s is empty", square(row, col))
-			break
+		piece := b.pieces[row][col]
+
+		switch {
+		case piece == 0:
+			b.setStatus(fmt.Sprintf("%s is empty", square(row, col)))
+		case sideOf(piece) != b.turn:
+			b.setStatus(fmt.Sprintf("%s is %s's", square(row, col), sideOf(piece)))
+		default:
+			b.holding = piece
+			b.fromRow, b.fromCol = row, col
+			b.setStatus(fmt.Sprintf("holding %s from %s", glyph(piece), square(row, col)))
 		}
 
-		b.holding = b.pieces[row][col]
-		b.fromRow, b.fromCol = row, col
-		b.status.Text = fmt.Sprintf("holding %s from %s", glyph(b.holding), square(row, col))
-
 	case row == b.fromRow && col == b.fromCol:
-		b.status.Text = fmt.Sprintf("put %s back on %s", glyph(b.holding), square(row, col))
+		b.setStatus(fmt.Sprintf("put %s back on %s", glyph(b.holding), square(row, col)))
 		b.holding = 0
 
 	default:
-		taken := b.pieces[row][col]
-		b.pieces[b.fromRow][b.fromCol] = 0
-		b.pieces[row][col] = b.holding
-
-		if taken != 0 {
-			b.status.Text = fmt.Sprintf("%s takes %s on %s", glyph(b.holding), glyph(taken), square(row, col))
-		} else {
-			b.status.Text = fmt.Sprintf("%s to %s", glyph(b.holding), square(row, col))
-		}
-
 		b.holding = 0
+		b.Apply(Move{FromRow: b.fromRow, FromCol: b.fromCol, ToRow: row, ToCol: col})
+
+		if b.onMove != nil {
+			b.onMove()
+		}
 	}
 
 	return stgui.Stay()
+}
+
+// Turn is the side to move.
+func (b *Board) Turn() Side {
+	return b.turn
+}
+
+// Piece is what stands on a square, or zero if nothing does. Squares off the
+// board are empty, so an engine can look at a neighbour without checking first.
+func (b *Board) Piece(row, col int) byte {
+	if row < 0 || row >= size || col < 0 || col >= size {
+		return 0
+	}
+
+	return b.pieces[row][col]
+}
+
+// Apply moves a piece and passes the turn. It asks no questions: whether the
+// move is legal is not the board's business.
+func (b *Board) Apply(move Move) {
+	piece := b.pieces[move.FromRow][move.FromCol]
+	taken := b.pieces[move.ToRow][move.ToCol]
+
+	b.pieces[move.FromRow][move.FromCol] = 0
+	b.pieces[move.ToRow][move.ToCol] = piece
+
+	b.turn = b.turn.Other()
+
+	to := square(move.ToRow, move.ToCol)
+	if taken != 0 {
+		b.setStatus(fmt.Sprintf("%s takes %s on %s", glyph(piece), glyph(taken), to))
+	} else {
+		b.setStatus(fmt.Sprintf("%s to %s", glyph(piece), to))
+	}
+
+	b.draw()
+}
+
+// setStatus shows what just happened, with whose turn it is underneath. A Label
+// splits on newlines, so the two sit together with no gap.
+func (b *Board) setStatus(action string) {
+	b.status.Text = action + "\n" + b.turn.String() + " to move"
 }
 
 // view is the board as a screen row: coordinates around the grid, and a redraw
