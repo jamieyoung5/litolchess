@@ -27,6 +27,10 @@ func (s Side) Other() Side {
 type Move struct {
 	FromRow, FromCol int
 	ToRow, ToCol     int
+
+	// Promote is what a pawn reaching the far rank becomes, given uppercase.
+	// Zero means a queen, so a move needs it only for an underpromotion.
+	Promote byte
 }
 
 // Player commands one side.
